@@ -51,6 +51,11 @@ jobs:
             echo "Failed to convert $manpage" >> _pdf_log.txt
           fi
         done
+
+    - name: Compress man page pdf
+      env:
+        release_date: ${{ steps.run_date.outputs.release_date_nodash }}
+      run: |
         zip -r man-db-${release_date}-en-pdf.zip _pdf
 
     - name: Compress man page files without modifying originals
