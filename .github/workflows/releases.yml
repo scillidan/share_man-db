@@ -1,0 +1,83 @@
+name: Create Releases
+
+on:
+  schedule:
+    - cron: '0 0 1 * *'  # 00:00 on the 1st of every month (UTC)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set run date as release tag and filename date
+      id: run_date
+      run: |
+        echo "release_tag=$(date -u +%F)" >> $GITHUB_OUTPUT
+        echo "release_date_nodash=$(date -u +%Y%m%d)" >> $GITHUB_OUTPUT
+
+    - name: Install man-db and zip md5sum tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y man man-db zip groff texlive-latex-base
+
+    - name: Update man pages
+      run: |
+        sudo mandb
+
+    - name: Compress man page files
+      env:
+        release_date: ${{ steps.run_date.outputs.release_date_nodash }}
+      run: |
+        cd /usr/share
+        zip -r man-db-${release_date}.zip man
+        zip -r man-db-${release_date}-en.zip man/man[1-9]
+        find man/man[1-9]/ -type f -name '*.gz' -exec gunzip -f {} +
+        zip -r man-db-${release_date}-en-decompress.zip man/man[1-9]
+        find man/man[1-9]/ -type f -exec bash -c 'for f; do mv "$f" "$f.txt"; done' bash {} +
+        zip -r man-db-${release_date}-en-decompress-txt.zip man/man[1-9]
+
+    - name: Generate PDF files from man pages
+      run: |
+        mkdir -p _pdf
+        echo "Starting man page to PDF conversion..." > _pdf_log.txt
+        man -k . | awk '{print $1}' | sort -u |
+        while IFS= read -r manpage
+        do
+          safe_name=$(echo "$manpage" | tr '/ ' '__')
+          echo "Processing man page: $manpage" >> _pdf_log.txt
+          if man -Tpdf "$manpage" > "_pdf/${safe_name}.pdf" 2>>_pdf_log.txt; then
+            filesize=$(stat -c%s "_pdf/${safe_name}.pdf")
+            if [ "$filesize" -gt 0 ]; then
+              echo "Converted $manpage => ${safe_name}.pdf (size: $filesize bytes)" >> _pdf_log.txt
+            else
+              echo "WARNING: PDF file has zero size for man page $manpage" >> _pdf_log.txt
+            fi
+          else
+            echo "Failed to convert $manpage" >> _pdf_log.txt
+          fi
+        done
+        zip -r man-db-${release_date}-en-pdf.zip _pdf
+
+    - name: Move zip files to repo root
+      env: 
+        release_date: ${{ steps.run_date.outputs.release_date_nodash }}
+      run: |
+        mv /usr/share/man-db-${release_date}*.zip .
+
+    - name: Create GitHub Release and upload files
+      uses: softprops/action-gh-release@v2
+      if: github.ref_type == 'tag' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+      with:
+        tag_name: ${{ steps.run_date.outputs.release_tag }}
+        name: ${{ steps.run_date.outputs.release_tag }}
+        files: | 
+          man-db-${{ steps.run_date.outputs.release_date_nodash }}*.zip
+          _pdf_log.txt
+
