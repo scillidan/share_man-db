@@ -31,18 +31,6 @@ jobs:
       run: |
         sudo mandb
 
-    - name: Compress man page files
-      env:
-        release_date: ${{ steps.run_date.outputs.release_date_nodash }}
-      run: |
-        cd /usr/share
-        zip -r man-db-${release_date}.zip man
-        zip -r man-db-${release_date}-en.zip man/man[1-9]
-        find man/man[1-9]/ -type f -name '*.gz' -exec gunzip -f {} +
-        zip -r man-db-${release_date}-en-decompress.zip man/man[1-9]
-        find man/man[1-9]/ -type f -exec bash -c 'for f; do mv "$f" "$f.txt"; done' bash {} +
-        zip -r man-db-${release_date}-en-decompress-txt.zip man/man[1-9]
-
     - name: Generate PDF files from man pages
       run: |
         mkdir -p _pdf
@@ -65,11 +53,17 @@ jobs:
         done
         zip -r man-db-${release_date}-en-pdf.zip _pdf
 
-    - name: Move zip files to repo root
-      env: 
+    - name: Compress man page files without modifying originals
+      env:
         release_date: ${{ steps.run_date.outputs.release_date_nodash }}
       run: |
-        mv /usr/share/man-db-${release_date}*.zip .
+        cp -a /usr/share/man ./man
+        zip -r man-db-${release_date}.zip man
+        zip -r man-db-${release_date}-en.zip man/man[1-9]
+        find man/man[1-9]/ -type f -name '*.gz' -exec gunzip -fv {} +
+        zip -r man-db-${release_date}-en-decompress.zip man/man[1-9]
+        find man/man[1-9]/ -type f -exec bash -c 'for f; do mv "$f" "$f.txt"; done' bash {} +
+        zip -r man-db-${release_date}-en-decompress-txt.zip man/man[1-9]
 
     - name: Create GitHub Release and upload files
       uses: softprops/action-gh-release@v2
@@ -77,7 +71,7 @@ jobs:
       with:
         tag_name: ${{ steps.run_date.outputs.release_tag }}
         name: ${{ steps.run_date.outputs.release_tag }}
-        files: | 
+        files: |
           man-db-${{ steps.run_date.outputs.release_date_nodash }}*.zip
           _pdf_log.txt
 
