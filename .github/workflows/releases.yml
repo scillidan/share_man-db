@@ -79,8 +79,4 @@ jobs:
         tag_name: ${{ steps.run_date.outputs.release_tag }}
         name: ${{ steps.run_date.outputs.release_tag }}
         files: |
-          _add_suffix_txt.log
-          _decompress_gz_errors.log
-          _generate_pdf.log
           man-db-${{ steps.run_date.outputs.release_date_nodash }}*.zip
-
