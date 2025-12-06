@@ -1,0 +1,45 @@
+#!/bin/bash
+
+# Directory to search; default to current if not specified
+SEARCH_DIR="${1:-.}"
+
+# Log file for errors
+LOG_FILE="_decompress_gz_errors.log"
+
+# Clear the log file at the start
+> "$LOG_FILE"
+
+# Temporary directory for extraction under the current directory
+TEMP_DIR="./_decompress"
+
+# Create the temporary directory if it doesn't exist
+mkdir -p "$TEMP_DIR"
+
+# Find all .gz files recursively
+find "$SEARCH_DIR" -type f -name "*.gz" | while read -r gzfile; do
+    echo "Decompressing: $gzfile"
+
+    # Preserve original directory structure
+    # Get the directory path relative to SEARCH_DIR
+    REL_DIR=$(dirname "${gzfile/#$SEARCH_DIR/}")
+
+    # Create the corresponding directory structure in the TEMP_DIR
+    mkdir -p "$TEMP_DIR/$REL_DIR"
+
+    # Check if the .gz file is corrupted
+    if gunzip -t "$gzfile"; then
+        # Attempt to decompress the file into TEMP_DIR and remove original .gz file
+        if gunzip -k -c "$gzfile" > "$TEMP_DIR/$REL_DIR/$(basename "$gzfile" .gz)"; then
+            echo "Successfully extracted $gzfile to $TEMP_DIR/$REL_DIR."
+            rm -f "$gzfile"  # Remove the original .gz file after successful extraction
+        else
+            echo "Failed to decompress $gzfile, logging error."
+            echo "$gzfile" >> "$LOG_FILE"  # Log the failed file
+        fi
+    else
+        echo "$gzfile is corrupted, logging error."
+        echo "$gzfile" >> "$LOG_FILE"  # Log the corrupted file
+    fi
+done
+
+echo "Decompression process completed. Check $LOG_FILE for any errors."
