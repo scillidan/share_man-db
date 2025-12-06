@@ -8,16 +8,13 @@ echo "Starting man page to PDF conversion..."
 
 # Get the list of man pages and process each one
 man -k . | awk '{print $1}' | sort -u | while IFS= read -r manpage; do
-    # Generate a safe filename by replacing spaces and slashes
-    safe_name=$(echo "$manpage" | tr '/ ' '__')
-
     echo "Processing man page: $manpage"
 
     # Convert man page to PDF and check for errors
-    if man -Tpdf "$manpage" > "_pdf/${safe_name}.pdf"; then
-        filesize=$(stat -c%s "_pdf/${safe_name}.pdf")
+    if man -Tpdf "$manpage" > "_pdf/${manpage}.pdf"; then
+        filesize=$(stat -c%s "_pdf/${manpage}.pdf")
         if [ "$filesize" -gt 0 ]; then
-            echo "Converted $manpage => ${safe_name}.pdf (size: $filesize bytes)"
+            echo "Converted $manpage => ${manpage}.pdf (size: $filesize bytes)"
         else
             echo "WARNING: PDF file has zero size for man page $manpage"
         fi
