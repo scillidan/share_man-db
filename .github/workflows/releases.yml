@@ -27,6 +27,26 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y man man-db zip groff ghostscript
 
+    - name: Get latest release version for code2prompt
+      id: get_version
+      run: |
+        LATEST_VERSION=$(curl -s https://api.github.com/repos/mufeedvh/code2prompt/releases/latest | jq -r '.tag_name')
+        echo "version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+
+    - name: Construct download URL of code2prompt
+      id: download_url
+      run: |
+        VERSION=${{ steps.get_version.outputs.version }}
+        URL="https://github.com/mufeedvh/code2prompt/releases/download/$VERSION/code2prompt-x86_64-unknown-linux-gnu"
+        echo "url=$URL" >> $GITHUB_OUTPUT
+
+    - name: Download and install code2prompt
+      run: |
+        URL=${{ steps.download_url.outputs.url }}
+        curl -L "$URL" -o code2prompt
+        chmod +x code2prompt
+        sudo mv code2prompt /usr/local/bin/
+
     - name: Update man pages
       run: |
         sudo mandb
@@ -42,15 +62,26 @@ jobs:
         zip -r man-db-${{ steps.run_date.outputs.release_date_nodash }}-en-pdf.zip man-pdf
         rm -rf man-pdf
 
+    - name: Copy man page files to root dir
+      run: |
+        cp -a /usr/share/man ./man
+
     - name: Compress all .gz files
       run: |
-        # Not modify local files
-        cp -a /usr/share/man ./man
         zip -r man-db-${{ steps.run_date.outputs.release_date_nodash }}.zip man
 
     - name: Compress en .gz files
       run: |
         zip -r man-db-${{ steps.run_date.outputs.release_date_nodash }}-en.zip man/man[1-9]
+
+    - name: Do code2prompt
+      run: |
+        sections=("man1" "man2" "man3" "man4" "man5" "man6" "man7" "man8")
+        for section in "${sections[@]}"; do
+          output_file="${section}.txt"
+          echo "Running: code2prompt.exe $section -o $output_file"
+          code2prompt.exe "man/$section" -o "$output_file"
+        done
 
     - name: Decompress EN .gz files and clean
       run: |
@@ -81,3 +112,4 @@ jobs:
         name: ${{ steps.run_date.outputs.release_tag }}
         files: |
           man-db-${{ steps.run_date.outputs.release_date_nodash }}*.zip
+          man-db-${{ steps.run_date.outputs.release_date_nodash }}*.txt
