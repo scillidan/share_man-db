@@ -1,0 +1,93 @@
+name: Create Releases
+
+on:
+  # 00:00 on the 1st of every month (UTC)
+  schedule:
+    - cron: '0 0 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set run date as and filename release tag
+      id: run_date
+      run: |
+        echo "release_tag=$(date -u +%F)" >> $GITHUB_OUTPUT
+        echo "release_date_nodash=$(date -u +%Y%m%d)" >> $GITHUB_OUTPUT
+
+    - name: Install man-db and zip md5sum tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y man man-db zip groff ghostscript
+
+    - name: Update man pages
+      run: sudo mandb
+
+    - name: Generate PDF files from man pages
+      run: |
+        chmod +x generate_pdf.sh
+        ./generate_pdf.sh
+        mv _pdf man-pdf
+
+    - name: Compress man pages PDF and clean
+      run: |
+        zip -r man-${{ steps.run_date.outputs.release_date_nodash }}-en-pdf.zip man-pdf
+        rm -rf man-pdf
+
+    - name: Copy man pages files to root dir
+      run: cp -a /usr/share/man ./man
+
+    - name: Compress GZIP files
+      run: zip -r man-${{ steps.run_date.outputs.release_date_nodash }}-gzip.zip man
+
+    - name: Compress EN GZIP files
+      run: zip -r man-${{ steps.run_date.outputs.release_date_nodash }}-en-gzip.zip man/man[1-9]
+
+    - name: Decompress EN GZIP files and clean
+      run: |
+        chmod +x decompress_gz.sh
+        ./decompress_gz.sh man
+        rm -rf man
+        mv _decompress man
+
+    - name: Compress EN files
+      run: |
+        zip -r man-${{ steps.run_date.outputs.release_date_nodash }}-en.zip man/man[1-9]
+
+    - name: Rename EN files to "*.txt"
+      run: |
+        chmod +x add_suffix_txt.sh
+        ./add_suffix_txt.sh man
+
+    - name: Compress EN-txt and clean
+      run: |
+        zip -r man-${{ steps.run_date.outputs.release_date_nodash }}-en-txt.zip man/man[1-9]
+        rm -rf man
+
+    - name: Generate SHA256 checksums
+      if: steps.check_new_release.outputs.should_continue == 'true'
+      run: |
+        for file in ./man-*.zip;
+        do
+          if [ -f "$file" ]; then
+            sha256sum "$file" > "$file.sha256";
+            echo "Generated checksum for $file";
+          fi
+        done
+
+    - name: Create GitHub Release and upload files
+      uses: softprops/action-gh-release@v2
+      if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+      with:
+        tag_name: ${{ steps.run_date.outputs.release_tag }}
+        name: ${{ steps.run_date.outputs.release_tag }}
+        files: |
+          man-*.zip
