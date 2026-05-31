@@ -15,7 +15,7 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: Set run date as and filename release tag
       id: run_date
@@ -84,7 +84,7 @@ jobs:
         done
 
     - name: Create GitHub Release and upload files
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@v3
       if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
       with:
         tag_name: ${{ steps.run_date.outputs.release_tag }}
