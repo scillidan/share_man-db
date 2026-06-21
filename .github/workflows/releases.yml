@@ -1,7 +1,6 @@
 name: Create Releases
 
 on:
-  # 00:00 on the 1st of every month (UTC)
   schedule:
     - cron: '0 0 1 * *'
   workflow_dispatch:
@@ -26,7 +25,7 @@ jobs:
     - name: Install man-db and zip md5sum tools
       run: |
         sudo apt-get update
-        sudo apt-get install -y man man-db zip groff ghostscript
+        sudo apt-get install -y man man-db zip groff ghostscript man2html
 
     - name: Update man pages
       run: sudo mandb
@@ -58,9 +57,32 @@ jobs:
         rm -rf man
         mv _decompress man
 
-    - name: Compress EN files
+    - name: Generate docset
+      run: python3 mandocset.py -o Linux_Man_Pages -i assets/tux.png -I assets/tux@2x.png -p man
+
+    - name: Update Info.plist
       run: |
-        zip -r man-${{ steps.run_date.outputs.release_date_nodash }}-en.zip man/man[1-9]
+        cat > Linux_Man_Pages.docset/Contents/Info.plist << 'PLIST'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <plist version="1.0">
+        <dict>
+        <key>CFBundleIdentifier</key>
+        <string>man</string>
+        <key>CFBundleName</key>
+        <string>Linux Man Pages</string>
+        <key>DocSetPlatformFamily</key>
+        <string>{}</string>
+        <key>isDashDocset</key>
+        <true/>
+        </dict>
+        </plist>
+        PLIST
+
+    - name: Create docset tgz
+      run: tar --exclude='.DS_Store' -czf Linux_Man_Pages.docset.tgz Linux_Man_Pages.docset
+
+    - name: Compress EN files
+      run: zip -r man-${{ steps.run_date.outputs.release_date_nodash }}-en.zip man/man[1-9]
 
     - name: Rename EN files to "*.txt"
       run: |
@@ -72,22 +94,50 @@ jobs:
         zip -r man-${{ steps.run_date.outputs.release_date_nodash }}-en-txt.zip man/man[1-9]
         rm -rf man
 
-    - name: Generate SHA256 checksums
-      if: steps.check_new_release.outputs.should_continue == 'true'
+    - name: Generate checksums
       run: |
-        for file in ./man-*.zip;
-        do
+        echo "" > checksums.txt
+        for file in ./man-*.zip ./Linux_Man_Pages.docset.tgz; do
           if [ -f "$file" ]; then
-            sha256sum "$file" > "$file.sha256";
-            echo "Generated checksum for $file";
+            sha256sum "$file" >> checksums.txt
           fi
         done
 
+    - name: Delete existing release if tag exists
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        tag="${{ steps.run_date.outputs.release_tag }}"
+        gh release delete "$tag" --yes || true
+        git tag -d "$tag" || true
+        git push origin ":refs/tags/$tag" || true
+
     - name: Create GitHub Release and upload files
-      uses: softprops/action-gh-release@v3
-      if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-      with:
-        tag_name: ${{ steps.run_date.outputs.release_tag }}
-        name: ${{ steps.run_date.outputs.release_tag }}
-        files: |
-          man-*.zip
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release create "${{ steps.run_date.outputs.release_tag }}" \
+          man-*.zip \
+          Linux_Man_Pages.docset.tgz \
+          checksums.txt \
+          --title "${{ steps.run_date.outputs.release_tag }}"
+
+    - name: Create or update XML file
+      run: |
+        echo "<entry>" > Manpages.xml
+        echo "  <name>Manpages</name>" >> Manpages.xml
+        echo "  <version>1.0</version>" >> Manpages.xml
+        echo "  <url>https://github.com/${{ github.repository }}/releases/download/${{ steps.run_date.outputs.release_tag }}/Linux_Man_Pages.docset.tgz</url>" >> Manpages.xml
+        echo "</entry>" >> Manpages.xml
+
+    - name: Upload XML file
+      run: |
+        git config --global user.name "GitHub Actions"
+        git config --global user.email "actions@github.com"
+        if ! git diff --quiet Manpages.xml 2>/dev/null; then
+          git add Manpages.xml
+          git commit -m "Update Manpages.xml for release ${{ steps.run_date.outputs.release_tag }}"
+          git push
+        else
+          echo "No changes to Manpages.xml, skipping commit."
+        fi
