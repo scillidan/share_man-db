@@ -124,20 +124,22 @@ jobs:
 
     - name: Create or update XML file
       run: |
-        echo "<entry>" > Manpages.xml
-        echo "  <name>Manpages</name>" >> Manpages.xml
-        echo "  <version>1.0</version>" >> Manpages.xml
-        echo "  <url>https://github.com/${{ github.repository }}/releases/download/${{ steps.run_date.outputs.release_tag }}/Linux_Man_Pages.docset.tgz</url>" >> Manpages.xml
-        echo "</entry>" >> Manpages.xml
+        cat > Linux_Man_Pages.xml << EOF
+        <entry>
+          <name>Linux_Man_Pages</name>
+          <version>${{ steps.run_date.outputs.release_date_nodash }}</version>
+          <url>https://github.com/${{ github.repository }}/releases/download/${{ steps.run_date.outputs.release_tag }}/Linux_Man_Pages.docset.tgz</url>
+        </entry>
+        EOF
 
     - name: Upload XML file
       run: |
         git config --global user.name "GitHub Actions"
         git config --global user.email "actions@github.com"
-        if ! git diff --quiet Manpages.xml 2>/dev/null; then
-          git add Manpages.xml
-          git commit -m "Update Manpages.xml for release ${{ steps.run_date.outputs.release_tag }}"
+        if ! git diff --quiet Linux_Man_Pages.xml 2>/dev/null; then
+          git add Linux_Man_Pages.xml
+          git commit -m "Update Linux_Man_Pages.xml for release ${{ steps.run_date.outputs.release_tag }}"
           git push
         else
-          echo "No changes to Manpages.xml, skipping commit."
+          echo "No changes to Linux_Man_Pages.xml, skipping commit."
         fi

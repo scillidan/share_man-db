@@ -40,6 +40,9 @@ def getPlist(name: str) -> str:
 '''
 
 
+def _sanitize_filename(name):
+	return name.replace('::', '__')
+
 def toHtml(executable, inf: str, outdir: str, basedir: str):
 	name = os.path.basename(inf)
 	with open(inf, 'rb') as raw_f:
@@ -54,7 +57,8 @@ def toHtml(executable, inf: str, outdir: str, basedir: str):
 		try:
 			subp = subprocess.Popen(executable, stdout=subprocess.PIPE, stdin=input_f)
 			first_line = subp.stdout.readline()
-			outpath = os.path.join(basedir, name) + '.html'
+			safe_name = _sanitize_filename(name)
+			outpath = os.path.join(basedir, safe_name) + '.html'
 			with open(os.path.join(outdir, outpath), 'wb') as f:
 				if not first_line.lower().startswith(b'content-type:'):
 					f.write(first_line)
@@ -109,7 +113,7 @@ class DocsetMaker:
 				print('\tman', jt)
 				name_for_db = re.match(DocsetMaker.manfre, jt).group(1)
 				dashtype = getType(mannum)
-				new_el = (mannum, name_for_db)
+				new_el = (mannum, _sanitize_filename(name_for_db))
 				if new_el not in self.dups:
 					outpath = toHtml(self.executable, manf, outbase, it)
 					self.db.execute('INSERT OR IGNORE INTO searchIndex(name, type, path) VALUES (?,?,?);',
