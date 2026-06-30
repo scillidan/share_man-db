@@ -79,7 +79,7 @@ jobs:
         <key>CFBundleName</key>
         <string>Linux Man Pages</string>
         <key>DocSetPlatformFamily</key>
-        <string>{}</string>
+        <string>man</string>
         <key>isDashDocset</key>
         <true/>
         </dict>
