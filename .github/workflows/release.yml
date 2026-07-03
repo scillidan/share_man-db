@@ -16,11 +16,10 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v6
 
-    - name: Set run date as and filename release tag
+    - name: Set release tag
       id: run_date
       run: |
-        echo "release_tag=$(date -u +%F)" >> $GITHUB_OUTPUT
-        echo "release_date_nodash=$(date -u +%Y%m%d)" >> $GITHUB_OUTPUT
+        echo "release_tag=$(date -u +%Y%m%d)" >> $GITHUB_OUTPUT
 
     - name: Install man-db and zip md5sum tools
       run: |
@@ -38,9 +37,9 @@ jobs:
 
     - name: Compress man pages PDF and clean
       env:
-        DATE_NODASH: ${{ steps.run_date.outputs.release_date_nodash }}
+        RELEASE_TAG: ${{ steps.run_date.outputs.release_tag }}
       run: |
-        zip -r man-${DATE_NODASH}-en-pdf.zip man-pdf
+        zip -r man-${RELEASE_TAG}-en-pdf.zip man-pdf
         rm -rf man-pdf
 
     - name: Copy man pages files to root dir
@@ -48,13 +47,13 @@ jobs:
 
     - name: Compress GZIP files
       env:
-        DATE_NODASH: ${{ steps.run_date.outputs.release_date_nodash }}
-      run: zip -r man-${DATE_NODASH}-gzip.zip man
+        RELEASE_TAG: ${{ steps.run_date.outputs.release_tag }}
+      run: zip -r man-${RELEASE_TAG}-gzip.zip man
 
     - name: Compress EN GZIP files
       env:
-        DATE_NODASH: ${{ steps.run_date.outputs.release_date_nodash }}
-      run: zip -r man-${DATE_NODASH}-en-gzip.zip man/man[1-9]
+        RELEASE_TAG: ${{ steps.run_date.outputs.release_tag }}
+      run: zip -r man-${RELEASE_TAG}-en-gzip.zip man/man[1-9]
 
     - name: Decompress EN GZIP files and clean
       run: |
@@ -89,8 +88,8 @@ jobs:
 
     - name: Compress EN files
       env:
-        DATE_NODASH: ${{ steps.run_date.outputs.release_date_nodash }}
-      run: zip -r man-${DATE_NODASH}-en.zip man/man[1-9]
+        RELEASE_TAG: ${{ steps.run_date.outputs.release_tag }}
+      run: zip -r man-${RELEASE_TAG}-en.zip man/man[1-9]
 
     - name: Rename EN files to "*.txt"
       run: |
@@ -99,9 +98,9 @@ jobs:
 
     - name: Compress EN-txt and clean
       env:
-        DATE_NODASH: ${{ steps.run_date.outputs.release_date_nodash }}
+        RELEASE_TAG: ${{ steps.run_date.outputs.release_tag }}
       run: |
-        zip -r man-${DATE_NODASH}-en-txt.zip man/man[1-9]
+        zip -r man-${RELEASE_TAG}-en-txt.zip man/man[1-9]
         rm -rf man
 
     - name: Generate checksums
@@ -135,14 +134,13 @@ jobs:
 
     - name: Create or update XML file
       env:
-        DATE_NODASH: ${{ steps.run_date.outputs.release_date_nodash }}
         RELEASE_TAG: ${{ steps.run_date.outputs.release_tag }}
       run: |
         cat > Linux_Man_Pages.xml << EOF
         <entry>
           <name>Linux_Man_Pages</name>
-          <version>$DATE_NODASH</version>
-          <url>https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/Linux_Man_Pages.docset.tgz</url>
+          <version>${RELEASE_TAG}</version>
+          <url>https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/Linux_Man_Pages.docset.tgz</url>
         </entry>
         EOF
 
@@ -152,10 +150,11 @@ jobs:
       run: |
         git config --global user.name "GitHub Actions"
         git config --global user.email "actions@github.com"
-        if ! git diff --quiet Linux_Man_Pages.xml 2>/dev/null; then
-          git add Linux_Man_Pages.xml
+        git checkout ${GITHUB_REF_NAME} || git checkout -b ${GITHUB_REF_NAME}
+        git add Linux_Man_Pages.xml
+        if ! git diff --cached --quiet; then
           git commit -m "Update Linux_Man_Pages.xml for release $RELEASE_TAG"
-          git push
+          git push origin HEAD:${GITHUB_REF_NAME}
         else
           echo "No changes to Linux_Man_Pages.xml, skipping commit."
         fi
