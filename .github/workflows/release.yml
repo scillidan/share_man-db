@@ -4,107 +4,267 @@ on:
   schedule:
     - cron: '0 0 1 * *'
   workflow_dispatch:
+    inputs:
+      build-gzip:
+        description: 'Build gzip archive'
+        type: boolean
+        default: true
+      build-pdf:
+        description: 'Build PDF archive'
+        type: boolean
+        default: true
+      build-txt:
+        description: 'Build txt archive (for LLM consumption)'
+        type: boolean
+        default: false
+      build-docset:
+        description: 'Build Dash/Zeal docset'
+        type: boolean
+        default: true
 
 permissions:
   contents: write
 
 jobs:
-  release:
+  detect-version:
     runs-on: ubuntu-latest
-
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      changed: ${{ steps.version.outputs.changed }}
     steps:
     - name: Checkout repository
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v6
 
-    - name: Set release tag
-      id: run_date
+    - name: Detect latest upstream version from kernel.org
+      id: version
       run: |
-        echo "release_tag=$(date -u +%Y%m%d)" >> $GITHUB_OUTPUT
+        listing=$(curl -s https://mirrors.edge.kernel.org/pub/linux/docs/man-pages/)
+        latest=$(echo "$listing" | grep -oP 'man-pages-\K[0-9]+\.[0-9]+(?:\.[0-9]+)?' | sort -V | tail -1)
+        if [ -z "$latest" ]; then
+          echo "Failed to detect upstream version"
+          exit 1
+        fi
+        echo "Detected latest upstream version: $latest"
+        echo "version=$latest" >> $GITHUB_OUTPUT
+        existing_tags=$(gh release list --limit 50 || true)
+        if echo "$existing_tags" | grep -q "^$latest"; then
+          echo "changed=false" >> $GITHUB_OUTPUT
+          echo "Version $latest already released, skipping."
+        else
+          echo "changed=true" >> $GITHUB_OUTPUT
+          echo "New version $latest detected, will build."
+        fi
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Install man-db and zip md5sum tools
+  build-gzip:
+    needs: detect-version
+    if: ${{ needs.detect-version.outputs.changed == 'true' && (github.event_name != 'workflow_dispatch' || inputs.build-gzip) }}
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v6
+
+    - name: Install tools
       run: |
         sudo apt-get update
-        sudo apt-get install -y man man-db zip groff ghostscript man2html
+        sudo apt-get install -y man man-db zip xz-utils
+        sudo mandb
 
-    - name: Update man pages
-      run: sudo mandb
+    - name: Download upstream man-pages tarball
+      env:
+        VERSION: ${{ needs.detect-version.outputs.version }}
+      run: |
+        curl -L -o man-pages.tar.xz https://mirrors.edge.kernel.org/pub/linux/docs/man-pages/man-pages-${VERSION}.tar.xz
+        mkdir -p upstream-man
+        tar --strip-components=1 -xf man-pages.tar.xz -C upstream-man
+
+    - name: Merge upstream with system man pages
+      run: |
+        cp -a /usr/share/man ./man
+        cp -rn upstream-man/man* man/
+
+    - name: Compress all man pages
+      env:
+        VERSION: ${{ needs.detect-version.outputs.version }}
+      run: zip -r man-${VERSION}.zip man
+
+    - name: Compress EN man pages
+      env:
+        VERSION: ${{ needs.detect-version.outputs.version }}
+      run: zip -r man-${VERSION}-en.zip man/man[1-9]
+
+    - name: Upload gzip artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: gzip-artifacts
+        path: man-*.zip
+
+  build-pdf:
+    needs: detect-version
+    if: ${{ needs.detect-version.outputs.changed == 'true' && (github.event_name != 'workflow_dispatch' || inputs.build-pdf) }}
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v6
+
+    - name: Install tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y man man-db zip groff ghostscript man2html xz-utils
+        sudo mandb
+
+    - name: Download upstream man-pages tarball
+      env:
+        VERSION: ${{ needs.detect-version.outputs.version }}
+      run: |
+        curl -L -o man-pages.tar.xz https://mirrors.edge.kernel.org/pub/linux/docs/man-pages/man-pages-${VERSION}.tar.xz
+        mkdir -p upstream-man
+        tar --strip-components=1 -xf man-pages.tar.xz -C upstream-man
+
+    - name: Install upstream man pages into system mandb
+      run: |
+        sudo cp -rn upstream-man/man* /usr/share/man/
+        sudo mandb
 
     - name: Generate PDF files from man pages
       run: |
-        chmod +x generate_pdf.sh
-        ./generate_pdf.sh
+        chmod +x scripts/generate_pdf.sh
+        ./scripts/generate_pdf.sh
         mv _pdf man-pdf
 
-    - name: Compress man pages PDF and clean
+    - name: Compress man pages PDF
       env:
-        RELEASE_TAG: ${{ steps.run_date.outputs.release_tag }}
+        VERSION: ${{ needs.detect-version.outputs.version }}
+      run: zip -r man-${VERSION}-en-pdf.zip man-pdf
+
+    - name: Upload PDF artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: pdf-artifacts
+        path: man-*.zip
+
+  build-txt:
+    needs: detect-version
+    if: ${{ needs.detect-version.outputs.changed == 'true' && (github.event_name == 'workflow_dispatch' && inputs.build-txt) }}
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v6
+
+    - name: Install tools
       run: |
-        zip -r man-${RELEASE_TAG}-en-pdf.zip man-pdf
-        rm -rf man-pdf
+        sudo apt-get update
+        sudo apt-get install -y man man-db zip xz-utils
+        sudo mandb
 
-    - name: Copy man pages files to root dir
-      run: cp -a /usr/share/man ./man
-
-    - name: Compress GZIP files
+    - name: Download upstream man-pages tarball
       env:
-        RELEASE_TAG: ${{ steps.run_date.outputs.release_tag }}
-      run: zip -r man-${RELEASE_TAG}-gzip.zip man
-
-    - name: Compress EN GZIP files
-      env:
-        RELEASE_TAG: ${{ steps.run_date.outputs.release_tag }}
-      run: zip -r man-${RELEASE_TAG}-en-gzip.zip man/man[1-9]
-
-    - name: Decompress EN GZIP files and clean
+        VERSION: ${{ needs.detect-version.outputs.version }}
       run: |
-        chmod +x decompress_gz.sh
-        ./decompress_gz.sh man
+        curl -L -o man-pages.tar.xz https://mirrors.edge.kernel.org/pub/linux/docs/man-pages/man-pages-${VERSION}.tar.xz
+        mkdir -p upstream-man
+        tar --strip-components=1 -xf man-pages.tar.xz -C upstream-man
+
+    - name: Copy system man pages and decompress
+      run: |
+        cp -a /usr/share/man ./man
+        chmod +x scripts/decompress_gz.sh
+        ./scripts/decompress_gz.sh man
         rm -rf man
         mv _decompress man
 
-    - name: Generate docset
-      run: python3 mandocset.py -o Linux_Man_Pages -i assets/tux.png -I assets/tux@2x.png -p man
-
-    - name: Update Info.plist
-      run: |
-        cat > Linux_Man_Pages.docset/Contents/Info.plist << 'PLIST'
-        <?xml version="1.0" encoding="UTF-8"?>
-        <plist version="1.0">
-        <dict>
-          <key>CFBundleIdentifier</key>
-          <string>man</string>
-          <key>CFBundleName</key>
-          <string>Linux Man Pages</string>
-          <key>DocSetPlatformFamily</key>
-          <string>man</string>
-        </dict>
-        </plist>
-        PLIST
-
-    - name: Create docset tgz
-      run: tar --exclude='.DS_Store' -czf Linux_Man_Pages.docset.tgz Linux_Man_Pages.docset
-
-    - name: Compress EN files
-      env:
-        RELEASE_TAG: ${{ steps.run_date.outputs.release_tag }}
-      run: zip -r man-${RELEASE_TAG}-en.zip man/man[1-9]
+    - name: Merge upstream man pages into decompressed directory
+      run: cp -rn upstream-man/man* man/
 
     - name: Rename EN files to "*.txt"
       run: |
-        chmod +x add_suffix_txt.sh
-        ./add_suffix_txt.sh man
+        chmod +x scripts/add_suffix_txt.sh
+        ./scripts/add_suffix_txt.sh man
 
     - name: Compress EN-txt and clean
       env:
-        RELEASE_TAG: ${{ steps.run_date.outputs.release_tag }}
+        VERSION: ${{ needs.detect-version.outputs.version }}
       run: |
-        zip -r man-${RELEASE_TAG}-en-txt.zip man/man[1-9]
+        zip -r man-${VERSION}-en-txt.zip man/man[1-9]
         rm -rf man
+
+    - name: Upload txt artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: txt-artifacts
+        path: man-*.zip
+
+  build-docset:
+    needs: detect-version
+    if: ${{ needs.detect-version.outputs.changed == 'true' && (github.event_name != 'workflow_dispatch' || inputs.build-docset) }}
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v6
+
+    - name: Install tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y man man-db man2html xz-utils
+        sudo mandb
+
+    - name: Download upstream man-pages tarball
+      env:
+        VERSION: ${{ needs.detect-version.outputs.version }}
+      run: |
+        curl -L -o man-pages.tar.xz https://mirrors.edge.kernel.org/pub/linux/docs/man-pages/man-pages-${VERSION}.tar.xz
+        mkdir -p upstream-man
+        tar --strip-components=1 -xf man-pages.tar.xz -C upstream-man
+
+    - name: Copy system man pages and decompress
+      run: |
+        cp -a /usr/share/man ./man
+        chmod +x scripts/decompress_gz.sh
+        ./scripts/decompress_gz.sh man
+        rm -rf man
+        mv _decompress man
+
+    - name: Merge upstream man pages into decompressed directory
+      run: cp -rn upstream-man/man* man/
+
+    - name: Generate docset
+      run: python3 scripts/mandocset.py -o Linux_Man_Pages --identifier man --bundle-name "Linux Man Pages" -i assets/tux.png -I assets/tux@2x.png -p man
+
+    - name: Create docset tgz
+      env:
+        VERSION: ${{ needs.detect-version.outputs.version }}
+      run: |
+        mv Linux_Man_Pages.docset Linux_Man_Pages_${VERSION}.docset
+        tar --exclude='.DS_Store' -czf Linux_Man_Pages_${VERSION}.tgz Linux_Man_Pages_${VERSION}.docset
+
+    - name: Upload docset artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: docset-artifacts
+        path: Linux_Man_Pages_*.tgz
+
+  release:
+    needs: [detect-version, build-gzip, build-pdf, build-docset]
+    if: ${{ needs.detect-version.outputs.changed == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v6
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+        merge-multiple: true
+
+    - name: List artifacts
+      run: ls -la artifacts/
 
     - name: Generate checksums
       run: |
         echo "" > checksums.txt
-        for file in ./man-*.zip ./Linux_Man_Pages.docset.tgz; do
+        for file in artifacts/man-*.zip artifacts/Linux_Man_Pages_*.tgz; do
           if [ -f "$file" ]; then
             sha256sum "$file" >> checksums.txt
           fi
@@ -113,46 +273,74 @@ jobs:
     - name: Delete existing release if tag exists
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        RELEASE_TAG: ${{ steps.run_date.outputs.release_tag }}
+        VERSION: ${{ needs.detect-version.outputs.version }}
       run: |
-        gh release delete "$RELEASE_TAG" --yes || true
-        git tag -d "$RELEASE_TAG" || true
-        git push origin ":refs/tags/$RELEASE_TAG" || true
+        gh release delete "$VERSION" --yes || true
+        git tag -d "$VERSION" || true
+        git push origin ":refs/tags/$VERSION" || true
 
     - name: Create GitHub Release
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        RELEASE_TAG: ${{ steps.run_date.outputs.release_tag }}
+        VERSION: ${{ needs.detect-version.outputs.version }}
       run: |
-        gh release create "$RELEASE_TAG" \
+        cd artifacts
+        gh release create "$VERSION" \
           man-*.zip \
-          Linux_Man_Pages.docset.tgz \
-          checksums.txt \
-          --title "$RELEASE_TAG"
+          Linux_Man_Pages_*.tgz \
+          ../checksums.txt \
+          --title "$VERSION"
 
     - name: Create or update XML file
       env:
-        RELEASE_TAG: ${{ steps.run_date.outputs.release_tag }}
+        VERSION: ${{ needs.detect-version.outputs.version }}
       run: |
         cat > Linux_Man_Pages.xml << EOF
         <entry>
           <name>Linux_Man_Pages</name>
-          <version>${RELEASE_TAG}</version>
-          <url>https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/Linux_Man_Pages.docset.tgz</url>
+          <version>${VERSION}</version>
+          <url>https://github.com/${{ github.repository }}/releases/download/${VERSION}/Linux_Man_Pages_${VERSION}.tgz</url>
         </entry>
         EOF
 
     - name: Upload XML file
       env:
-        RELEASE_TAG: ${{ steps.run_date.outputs.release_tag }}
+        VERSION: ${{ needs.detect-version.outputs.version }}
       run: |
         git config --global user.name "GitHub Actions"
         git config --global user.email "actions@github.com"
         git checkout ${GITHUB_REF_NAME} || git checkout -b ${GITHUB_REF_NAME}
         git add Linux_Man_Pages.xml
         if ! git diff --cached --quiet; then
-          git commit -m "Update Linux_Man_Pages.xml for release $RELEASE_TAG"
+          git commit -m "Update Linux_Man_Pages.xml for release $VERSION"
           git push origin HEAD:${GITHUB_REF_NAME}
         else
           echo "No changes to Linux_Man_Pages.xml, skipping commit."
         fi
+
+  release-txt:
+    needs: [detect-version, build-txt]
+    if: ${{ needs.detect-version.outputs.changed == 'true' && always() && needs.build-txt.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v6
+
+    - name: Download txt artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: txt-artifacts
+        path: artifacts
+
+    - name: Upload txt to existing release
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        VERSION: ${{ needs.detect-version.outputs.version }}
+      run: |
+        cd artifacts
+        for file in man-*-en-txt.zip; do
+          if [ -f "$file" ]; then
+            sha256sum "$file" >> ../checksums.txt
+            gh release upload "$VERSION" "$file" --clobber
+          fi
+        done
