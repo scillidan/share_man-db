@@ -14,11 +14,11 @@ on:
         type: boolean
         default: true
       build-txt:
-        description: 'Build txt archive (for LLM consumption)'
+        description: 'Build txt archive (uncompress and add .txt suffix)'
         type: boolean
         default: false
       build-docset:
-        description: 'Build Dash/Zeal docset'
+        description: 'Build docset archive'
         type: boolean
         default: true
 
@@ -232,17 +232,14 @@ jobs:
       run: python3 scripts/mandocset.py -o Linux_Man_Pages --identifier man --bundle-name "Linux Man Pages" -i assets/tux.png -I assets/tux@2x.png -p man
 
     - name: Create docset tgz
-      env:
-        VERSION: ${{ needs.detect-version.outputs.version }}
       run: |
-        mv Linux_Man_Pages.docset Linux_Man_Pages_${VERSION}.docset
-        tar --exclude='.DS_Store' -czf Linux_Man_Pages_${VERSION}.tgz Linux_Man_Pages_${VERSION}.docset
+        tar --exclude='.DS_Store' -czf Linux_Man_Pages.tgz Linux_Man_Pages.docset
 
     - name: Upload docset artifacts
       uses: actions/upload-artifact@v4
       with:
         name: docset-artifacts
-        path: Linux_Man_Pages_*.tgz
+        path: Linux_Man_Pages.tgz
 
   release:
     needs: [detect-version, build-gzip, build-pdf, build-docset]
@@ -264,7 +261,7 @@ jobs:
     - name: Generate checksums
       run: |
         echo "" > checksums.txt
-        for file in artifacts/man-*.zip artifacts/Linux_Man_Pages_*.tgz; do
+        for file in artifacts/man-*.zip artifacts/Linux_Man_Pages.tgz; do
           if [ -f "$file" ]; then
             sha256sum "$file" >> checksums.txt
           fi
@@ -287,7 +284,7 @@ jobs:
         cd artifacts
         gh release create "$VERSION" \
           man-*.zip \
-          Linux_Man_Pages_*.tgz \
+          Linux_Man_Pages.tgz \
           ../checksums.txt \
           --title "$VERSION"
 
@@ -299,7 +296,7 @@ jobs:
         <entry>
           <name>Linux_Man_Pages</name>
           <version>${VERSION}</version>
-          <url>https://github.com/${{ github.repository }}/releases/download/${VERSION}/Linux_Man_Pages_${VERSION}.tgz</url>
+          <url>https://github.com/${{ github.repository }}/releases/download/${VERSION}/Linux_Man_Pages.tgz</url>
         </entry>
         EOF
 
